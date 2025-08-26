@@ -1,157 +1,362 @@
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
 local player = Players.LocalPlayer
 local camera = workspace.CurrentCamera
 
-local targetDistance = 5 -- 5 metrów w poziomie XZ
-local npcNames = {"Military Scout", "Vulture Scout", "Rebel Scout", "Broker"}
+local Rayfield = loadstring(game:HttpGet("https://raw.githubusercontent.com/SiriusSoftwareLtd/Rayfield/main/source.lua"))()
 
-local npcList = {} -- lista NPC
+-- NPC
+local npcNames = {"Military Scout", "Vulture Scout", "Rebel Scout", "Broker", "Merchant"}
+local npcList = {}
 
--- Sprawdza czy model jest celem
-local function isTarget(model)
-    for _, name in ipairs(npcNames) do
-        if model.Name == name then
-            return true
-        end
-    end
-    return false
-end
+-- Opcje
+local highlightNPCEnabled = false
+local highlightPlayersEnabled = false
+local autoAimlockEnabled = false
+local keyAimlockActive = false
+local aimSpeed = 0.2
+local aimlockDistance = 500
+local highlightDistance = 200
+local highlightAutoRefresh = false
+local highlightRefreshRate = 5
+local aimlockTargetPart = "Head"
 
--- Dodaje podświetlenie NPC
-local function highlightNPC(npc)
-    if not npc:FindFirstChildOfClass("Highlight") then
-        local highlight = Instance.new("Highlight")
-        highlight.Parent = npc
-        highlight.FillColor = Color3.fromRGB(255, 0, 0)
-        highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
-        highlight.FillTransparency = 0.5
-    end
-end
-
--- Usuwa podświetlenie NPC
-local function removeHighlight(npc)
-    local hl = npc:FindFirstChildOfClass("Highlight")
-    if hl then hl:Destroy() end
-end
-
--- Tworzy nowoczesny pasek zdrowia nad NPC
-local function createHealthBar(npc)
-    if npc:FindFirstChild("HealthBarGui") then return end
-    local head = npc:FindFirstChild("Head")
-    if not head then return end
-
-    local billboard = Instance.new("BillboardGui")
-    billboard.Name = "HealthBarGui"
-    billboard.Adornee = head
-    billboard.Size = UDim2.new(4, 0, 0.5, 0)
-    billboard.StudsOffset = Vector3.new(0, 2, 0)
-    billboard.AlwaysOnTop = true
-
-    local background = Instance.new("Frame")
-    background.BackgroundColor3 = Color3.fromRGB(50,50,50)
-    background.Size = UDim2.new(1,0,1,0)
-    background.BorderSizePixel = 0
-    background.Parent = billboard
-
-    local healthBar = Instance.new("Frame")
-    healthBar.Name = "Bar"
-    healthBar.BackgroundColor3 = Color3.fromRGB(0,255,0)
-    healthBar.BorderSizePixel = 0
-    healthBar.Size = UDim2.new(1,0,1,0)
-    healthBar.Parent = background
-
-    billboard.Parent = npc
-
-    local humanoid = npc:FindFirstChild("Humanoid")
-    if humanoid then
-        humanoid:GetPropertyChangedSignal("Health"):Connect(function()
-            local ratio = math.clamp(humanoid.Health / humanoid.MaxHealth, 0, 1)
-            healthBar:TweenSize(UDim2.new(ratio,0,1,0), "Out", "Quad", 0.2, true)
-        end)
-    end
-end
-
--- Rekurencyjne skanowanie folderów w workspace
-local function scanFolder(folder)
-    local list = {}
-    for _, child in pairs(folder:GetChildren()) do
-        if child:IsA("Model") and isTarget(child) and child:FindFirstChild("HumanoidRootPart") and child:FindFirstChild("Humanoid") then
-            if child.Humanoid.Health > 0 then
-                highlightNPC(child)
-                createHealthBar(child)
-                table.insert(list, child)
-            else
-                removeHighlight(child)
-            end
-        end
-        if #child:GetChildren() > 0 then
-            local sublist = scanFolder(child)
-            for _, v in pairs(sublist) do
-                table.insert(list, v)
-            end
-        end
-    end
-    return list
-end
-
--- Odświeżanie listy NPC co 1 sekundę
-task.spawn(function()
-    while true do
-        npcList = scanFolder(workspace)
-        task.wait(1)
-    end
-end)
-
--- Znajdź najbliższego NPC w zasięgu (poziom XZ) i w linii wzroku
-local function getClosestTarget()
-    local char = player.Character
-    if not char or not char:FindFirstChild("Head") then return nil end
-    local headPos = char.Head.Position
-
-    local closest, closestDist = nil, targetDistance
-
-    for _, npc in ipairs(npcList) do
-        if npc:FindFirstChild("Humanoid") and npc.Humanoid.Health > 0 then
-            local aimPart = npc:FindFirstChild("Head") or npc:FindFirstChild("HumanoidRootPart")
-            if aimPart then
-                local npcPosXZ = Vector3.new(aimPart.Position.X, 0, aimPart.Position.Z)
-                local headPosXZ = Vector3.new(headPos.X, 0, headPos.Z)
-                local dist = (npcPosXZ - headPosXZ).Magnitude
-
-                if dist <= targetDistance then
-                    local rayDir = aimPart.Position - headPos
-                    local rayParams = RaycastParams.new()
-                    rayParams.FilterDescendantsInstances = {char, npc}
-                    rayParams.FilterType = Enum.RaycastFilterType.Blacklist
-
-                    local result = workspace:Raycast(headPos, rayDir, rayParams)
-                    if result then
-                        if not result.Instance:IsDescendantOf(npc) then
-                            continue
-                        end
-                    end
-
-                    if dist < closestDist then
-                        closest, closestDist = npc, dist
+-- Odświeżanie listy NPC
+local function refreshNPCList()
+    npcList = {}
+    local function scanFolder(folder)
+        for _, child in pairs(folder:GetChildren()) do
+            if child:IsA("Model") and child:FindFirstChild("HumanoidRootPart") and child:FindFirstChild("Humanoid") then
+                for _, name in ipairs(npcNames) do
+                    if child.Name == name then
+                        table.insert(npcList, child)
+                        break
                     end
                 end
             end
-        else
-            removeHighlight(npc)
+            if #child:GetChildren() > 0 then
+                scanFolder(child)
+            end
+        end
+    end
+    scanFolder(workspace)
+end
+
+-- Pobranie części docelowej do aimlock
+local function getAimPart(model)
+    local targetPartName = (type(aimlockTargetPart) == "string") and aimlockTargetPart or "Head"
+    local priorities = {targetPartName, "HumanoidRootPart", "Torso", "UpperTorso", "LowerTorso"}
+
+    for _, partName in ipairs(priorities) do
+        local part = model:FindFirstChild(partName)
+        if part and part:IsA("BasePart") then
+            return part
         end
     end
 
+    for _, child in ipairs(model:GetDescendants()) do
+        if child:IsA("BasePart") then
+            return child
+        end
+    end
+    return nil
+end
+
+-- Sprawdzenie czy część jest widoczna
+local function isVisible(part)
+    local origin = camera.CFrame.Position
+    local direction = (part.Position - origin)
+    local rayParams = RaycastParams.new()
+    rayParams.FilterType = Enum.RaycastFilterType.Blacklist
+    rayParams.FilterDescendantsInstances = {player.Character}
+    local ray = workspace:Raycast(origin, direction, rayParams)
+    if ray then
+        return ray.Instance:IsDescendantOf(part.Parent)
+    end
+    return true
+end
+
+-- Highlight NPC
+local function updateNPCHighlights()
+    if not player.Character or not player.Character:FindFirstChild("Head") then return end
+    local headPos = player.Character.Head.Position
+    for _, npc in ipairs(npcList) do
+        local humanoid = npc:FindFirstChild("Humanoid")
+        local part = getAimPart(npc)
+        local hl = npc:FindFirstChild("NPCHighlight")
+        if humanoid and humanoid.Health > 0 and part then
+            local dist = (part.Position - headPos).Magnitude
+            if highlightNPCEnabled and dist <= highlightDistance then
+                if not hl then
+                    hl = Instance.new("Highlight")
+                    hl.Name = "NPCHighlight"
+                    hl.Parent = npc
+                    if npc.Name == "Merchant" then
+                        hl.FillColor = Color3.fromRGB(0, 255, 0)
+                    elseif npc.Name == "Broker" then
+                        hl.FillColor = Color3.fromRGB(255, 165, 0)
+                    else
+                        hl.FillColor = Color3.fromRGB(255, 0, 0)
+                    end
+                    hl.OutlineColor = Color3.fromRGB(255, 255, 255)
+                    hl.FillTransparency = 0.5
+                end
+            elseif hl then
+                hl:Destroy()
+            end
+        elseif hl then
+            hl:Destroy()
+        end
+    end
+end
+
+-- Highlight graczy
+local function updatePlayerHighlights()
+    if not player.Character or not player.Character:FindFirstChild("Head") then return end
+    local headPos = player.Character.Head.Position
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= player and p.Character then
+            local humanoid = p.Character:FindFirstChild("Humanoid")
+            local part = getAimPart(p.Character)
+            local hl = p.Character:FindFirstChild("PlayerHighlight")
+            if humanoid and humanoid.Health > 0 and part then
+                local dist = (part.Position - headPos).Magnitude
+                if highlightPlayersEnabled and dist <= highlightDistance then
+                    if not hl then
+                        hl = Instance.new("Highlight")
+                        hl.Name = "PlayerHighlight"
+                        hl.Parent = p.Character
+                        hl.FillColor = Color3.fromRGB(128, 0, 128)
+                        hl.OutlineColor = Color3.fromRGB(255, 255, 255)
+                        hl.FillTransparency = 0.5
+                    end
+                elseif hl then
+                    hl:Destroy()
+                end
+            elseif hl then
+                hl:Destroy()
+            end
+        end
+    end
+end
+
+-- Aimlock
+local function getClosestHumanoid()
+    if not player.Character or not player.Character:FindFirstChild("Head") then return nil end
+    local headPos = player.Character.Head.Position
+    local closest, closestDist = nil, aimlockDistance
+
+    local allHumanoids = {}
+    for _, npc in ipairs(npcList) do table.insert(allHumanoids, npc) end
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= player and p.Character then
+            table.insert(allHumanoids, p.Character)
+        end
+    end
+
+    for _, model in ipairs(allHumanoids) do
+        local humanoid = model:FindFirstChild("Humanoid")
+        local part = getAimPart(model)
+        if humanoid and humanoid.Health > 0 and part and isVisible(part) then
+            local dist = (part.Position - headPos).Magnitude
+            if dist < closestDist then
+                closest, closestDist = model, dist
+            end
+        end
+    end
     return closest
 end
 
--- Lock-on kamery
+-- Toggle pod P
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.KeyCode == Enum.KeyCode.P then
+        keyAimlockActive = not keyAimlockActive
+    end
+end)
+
+-- Funkcje natychmiastowego update
+local function immediateUpdateHighlights()
+    if highlightNPCEnabled then
+        refreshNPCList()
+        updateNPCHighlights()
+    else
+        for _, npc in ipairs(npcList) do
+            local hl = npc:FindFirstChild("NPCHighlight")
+            if hl then hl:Destroy() end
+        end
+    end
+
+    if highlightPlayersEnabled then
+        updatePlayerHighlights()
+    else
+        for _, p in ipairs(Players:GetPlayers()) do
+            local hl = p.Character and p.Character:FindFirstChild("PlayerHighlight")
+            if hl then hl:Destroy() end
+        end
+    end
+end
+
+-- Pętle do ciągłego aimlocka i highlightów
 RunService.RenderStepped:Connect(function()
-    local target = getClosestTarget()
-    if target then
-        local aimPart = target:FindFirstChild("Head") or target:FindFirstChild("HumanoidRootPart")
-        if aimPart then
-            camera.CFrame = CFrame.new(camera.CFrame.Position, aimPart.Position)
+    if highlightNPCEnabled then updateNPCHighlights() end
+    if highlightPlayersEnabled then updatePlayerHighlights() end
+
+    if autoAimlockEnabled or keyAimlockActive then
+        local target = getClosestHumanoid()
+        if target then
+            local part = getAimPart(target)
+            if part then
+                camera.CFrame = camera.CFrame:Lerp(CFrame.new(camera.CFrame.Position, part.Position), aimSpeed)
+            end
         end
     end
 end)
+
+-- Automatyczne odświeżanie highlight
+spawn(function()
+    while true do
+        if highlightAutoRefresh then
+            immediateUpdateHighlights()
+        end
+        wait(highlightRefreshRate)
+    end
+end)
+
+--== GUI Rayfield ==
+local Window = Rayfield:CreateWindow({
+    Name = "Aimlock Hub",
+    LoadingTitle = "Ładowanie...",
+    LoadingSubtitle = "Proszę czekać",
+    Theme = "Dark",
+    ToggleKey = Enum.KeyCode.RightControl
+})
+
+local Tab = Window:CreateTab("Ustawienia", 4483362458)
+
+-- Highlight NPC
+Tab:CreateToggle({
+    Name = "Highlight NPC",
+    CurrentValue = highlightNPCEnabled,
+    Flag = "highlightNPCToggle",
+    Callback = function(value)
+        highlightNPCEnabled = value
+        immediateUpdateHighlights()
+    end
+})
+
+-- Highlight Players
+Tab:CreateToggle({
+    Name = "Highlight Players",
+    CurrentValue = highlightPlayersEnabled,
+    Flag = "highlightPlayersToggle",
+    Callback = function(value)
+        highlightPlayersEnabled = value
+        immediateUpdateHighlights()
+    end
+})
+
+-- Auto Aimlock
+Tab:CreateToggle({
+    Name = "Auto Aimlock",
+    CurrentValue = autoAimlockEnabled,
+    Flag = "autoAimlockToggle",
+    Callback = function(value)
+        autoAimlockEnabled = value
+    end
+})
+
+-- Aimlock pod P
+Tab:CreateToggle({
+    Name = "Aimlock pod P",
+    CurrentValue = keyAimlockActive,
+    Flag = "keyAimlockToggle",
+    Callback = function(value)
+        keyAimlockActive = value
+    end
+})
+
+-- Auto Refresh Highlight
+Tab:CreateToggle({
+    Name = "Auto Refresh Highlight",
+    CurrentValue = highlightAutoRefresh,
+    Flag = "highlightAutoRefresh",
+    Callback = function(value)
+        highlightAutoRefresh = value
+    end
+})
+
+-- Highlight Refresh Rate
+Tab:CreateSlider({
+    Name = "Highlight Refresh Rate",
+    Range = {1,60},
+    Increment = 1,
+    CurrentValue = highlightRefreshRate,
+    Suffix = " sec",
+    Flag = "highlightRefreshRate",
+    Callback = function(value)
+        highlightRefreshRate = value
+    end
+})
+
+-- Smoothness
+Tab:CreateSlider({
+    Name = "Smoothness",
+    Range = {0.01,1},
+    Increment = 0.01,
+    CurrentValue = aimSpeed,
+    Suffix = "",
+    Flag = "aimSpeedSlider",
+    Callback = function(value)
+        aimSpeed = value
+    end
+})
+
+-- Aimlock Distance
+Tab:CreateSlider({
+    Name = "Aimlock Distance",
+    Range = {5,2000},
+    Increment = 5,
+    CurrentValue = aimlockDistance,
+    Suffix = " stud",
+    Flag = "aimDistanceSlider",
+    Callback = function(value)
+        aimlockDistance = value
+    end
+})
+
+-- Highlight Distance
+Tab:CreateSlider({
+    Name = "Highlight Distance",
+    Range = {5,2000},
+    Increment = 5,
+    CurrentValue = highlightDistance,
+    Suffix = " stud",
+    Flag = "highlightDistanceSlider",
+    Callback = function(value)
+        highlightDistance = value
+    end
+})
+
+-- Wybór części ciała do aimlock
+local bodyParts = {"Head", "HumanoidRootPart", "Torso", "UpperTorso", "LowerTorso"}
+Tab:CreateDropdown({
+    Name = "Aimlock Target Part",
+    Options = bodyParts,
+    CurrentOption = aimlockTargetPart,
+    Flag = "aimlockPartDropdown",
+    Callback = function(option)
+        aimlockTargetPart = option
+        -- natychmiast aktualizujemy aimlock target
+        if autoAimlockEnabled or keyAimlockActive then
+            local target = getClosestHumanoid()
+            if target then
+                local part = getAimPart(target)
+                if part then
+                    camera.CFrame = CFrame.new(camera.CFrame.Position, part.Position)
+                end
+            end
+        end
+    end
+})
