@@ -68,7 +68,7 @@ local Terminals = Instance.new("Folder")
 if game.PlaceId ~= Nightbound then
     Terminals = workspace:WaitForChild("Terminals")
 end
-local FastCast = require(ReplicatedStorage.Mods.FastCast)
+--local FastCast = require(ReplicatedStorage.Mods.FastCast)
 
 local Remotes = {
     MinigameResult = ReplicatedStorage.Events.Loot.MinigameResult,
